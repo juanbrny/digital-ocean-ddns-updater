@@ -6,7 +6,7 @@ DDNS script and systemd timer to update Digital Ocean DNS entries
 ## Install script
 
 ```sh
-sh sudo install -m 0755 do-ddns.sh /usr/local/bin/do-ddns
+sudo install -m 0755 do-ddns.sh /usr/local/bin/do-ddns
 ```
 
 ## Environment file, service and timer
