@@ -11,10 +11,8 @@ sh sudo install -m 0755 do-ddns.sh /usr/local/bin/do-ddns
 
 ## Environment file, service and timer
 
-This avoids secrets inside unit files.
-
 ```sh
-# Use env file to avoid inside unit files.
+# Use env file to avoid secrets inside unit files.
 
 sudo mkdir -p /etc/do-ddns
 
@@ -81,7 +79,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now do-ddns-hq.timer
 ```
 
-Test
+## Test
 ```
 systemctl status do-ddns-hq.timer
 ```
