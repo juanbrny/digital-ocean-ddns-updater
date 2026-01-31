@@ -126,5 +126,6 @@ jobs:
           # Create the release and attach assets in one shot
           gh release create "$tag" \
             dist/do-ddns-* dist/*.sha256 dist/*.tar.gz \
-            --generate-notes
+            --generate-notes \
+            --latest
 
