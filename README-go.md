@@ -14,6 +14,13 @@ go version
 go build -o do-ddns ./do-ddns.go
 ```
 
+## Download app
+If you don't want to setup a go build env locally, just pick the binary version that matches your architecture:
+````
+curl -fsSL https://github.com/<ORG>/<REPO>/releases/latest/download/do-ddns-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') -o do-ddns && chmod +x do-ddns
+install -m 0755 do-ddns /usr/local/bin/do-ddns
+```
+
 ## Define env vars
 ```
 set -a
@@ -26,7 +33,4 @@ set +a
 ./do-ddns
 ```
 ## Configure systemd timer
-````
-install -m 0755 do-ddns /usr/local/bin/do-ddns
-````
-After that, reuse the systemd config from the Bash version
+Reuse the systemd config from the Bash versiongit push origin v0.1.0

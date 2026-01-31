@@ -42,6 +42,9 @@ jobs:
             goarch: amd64
           - goos: darwin
             goarch: arm64
+          # Optional Windows:
+          # - goos: windows
+          #   goarch: amd64
 
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +58,9 @@ jobs:
 
       - name: Compute version
         id: ver
+        shell: bash
         run: |
+          set -euo pipefail
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
@@ -63,6 +68,7 @@ jobs:
           fi
 
       - name: Build
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -71,25 +77,33 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           BIN="do-ddns"
-          OUT="${BIN}-${{ steps.ver.outputs.version }}-${GOOS}-${GOARCH}"
+          EXT=""
+          if [[ "$GOOS" == "windows" ]]; then EXT=".exe"; fi
+
+          OUT="${BIN}-${{ steps.ver.outputs.version }}-${GOOS}-${GOARCH}${EXT}"
 
           go build -trimpath -ldflags "-s -w" -o "dist/${OUT}" .
 
           (cd dist && sha256sum "${OUT}" > "${OUT}.sha256")
 
       - name: Package
+        shell: bash
         run: |
           set -euo pipefail
           cd dist
-          for f in do-ddns-*-${{ matrix.goos }}-${{ matrix.goarch }}; do
+
+          # Package only the binary (avoid picking up .sha256 as "f")
+          shopt -s nullglob
+          for f in do-ddns-*-${{ matrix.goos }}-${{ matrix.goarch }}*; do
+            [[ "$f" == *.sha256 ]] && continue
             tar -czf "${f}.tar.gz" "${f}" "${f}.sha256"
           done
 
-      - name: Upload artifact (PRs / main / tags)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: do-ddns-${{ steps.ver.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          # Single glob avoids any chance of duplicates/odd behavior.
+          # Single glob: includes binary + .sha256 + .tar.gz; avoids duplicates.
           path: dist/do-ddns-*
 
   release:
@@ -99,39 +113,42 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Option A: checkout so gh can use git context (and gh auth status won't error)
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
       - name: Flatten artifacts
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
 
-          # Copy only our release assets (raw binaries + sha + tar.gz) that start with do-ddns-
+          # Copy only our release assets into dist/
           find artifacts -type f -name 'do-ddns-*' -exec cp -f {} dist/ \;
 
           echo "=== dist contents ==="
           ls -lah dist
 
           echo "=== duplicate filenames check ==="
-          # If this prints anything, something is wrong and would cause upload conflicts.
-          (cd dist && ls -1 | sort | uniq -d) || true
-
-          # Hard fail if any duplicates exist in dist (should be impossible, but defensive)
           if (cd dist && ls -1 | sort | uniq -d | grep -q .); then
             echo "ERROR: duplicate filenames detected in dist/ (would cause asset conflicts)"
+            (cd dist && ls -1 | sort | uniq -d)
             exit 1
           fi
 
-          # Hard fail if we somehow have zero assets
           if [ "$(find dist -maxdepth 1 -type f -name 'do-ddns-*' | wc -l)" -eq 0 ]; then
             echo "ERROR: no release assets found in dist/"
             exit 1
           fi
 
       - name: Create & publish release (draft-first, safe uploads)
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -140,7 +157,7 @@ jobs:
 
           echo "Preparing release for tag: ${tag}"
 
-          # Ensure gh is authenticated
+          # Ensure gh is authenticated (requires checkout to avoid ".git" error)
           gh auth status
 
           # If a release already exists for this tag (draft or published), delete it.
@@ -150,17 +167,15 @@ jobs:
             gh release delete "$tag" -y
           fi
 
-          # 1) Create draft release with NO assets (prevents create-time asset update issues)
+          # 1) Create draft release with NO assets (avoids create-time asset update issues)
           gh release create "$tag" --draft --generate-notes
 
-          # 2) Upload assets to the draft
-          # Use a deterministic, de-duplicated file list
+          # 2) Upload assets to the draft using a deterministic, de-duplicated list
           mapfile -t files < <(find dist -maxdepth 1 -type f -name 'do-ddns-*' -print | sort)
 
           echo "Uploading assets:"
           printf '  %s\n' "${files[@]}"
 
-          # Upload (no clobber needed because release is new; if you prefer, add --clobber)
           gh release upload "$tag" "${files[@]}"
 
           # 3) Publish (not draft) and mark latest
