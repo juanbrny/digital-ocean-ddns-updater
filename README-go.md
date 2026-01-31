@@ -16,7 +16,9 @@ go build -o do-ddns ./do-ddns.go
 
 ## Define env vars
 ```
-source /etc/do-ddns/hq.env
+set -a
+. /etc/do-ddns/hq.env
+set +a
 ```
 
 ## Run
