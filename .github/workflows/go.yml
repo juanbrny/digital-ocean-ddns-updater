@@ -81,21 +81,17 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          for f in do-ddns-*-${{ matrix.goos }}-${{ matrix.goarch }}*; do
-            case "$f" in
-              *.sha256) continue ;;
-            esac
+          for f in do-ddns-*-${{ matrix.goos }}-${{ matrix.goarch }}; do
             tar -czf "${f}.tar.gz" "${f}" "${f}.sha256"
           done
 
-      - name: Upload artifact (PRs / main)
+      - name: Upload artifact (PRs / main / tags)
         uses: actions/upload-artifact@v4
         with:
           name: do-ddns-${{ steps.ver.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            dist/*.tar.gz
-            dist/do-ddns-*
-            dist/*.sha256
+          # Single glob avoids any chance of duplicates/odd behavior.
+          path: dist/do-ddns-*
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -112,25 +108,60 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          find artifacts -type f -name 'do-ddns-*' -exec cp {} dist/ \;
+
+          # Copy only our release assets (raw binaries + sha + tar.gz) that start with do-ddns-
+          find artifacts -type f -name 'do-ddns-*' -exec cp -f {} dist/ \;
+
           echo "=== dist contents ==="
           ls -lah dist
 
-      - name: Create release with binaries (published)
+          echo "=== duplicate filenames check ==="
+          # If this prints anything, something is wrong and would cause upload conflicts.
+          (cd dist && ls -1 | sort | uniq -d) || true
+
+          # Hard fail if any duplicates exist in dist (should be impossible, but defensive)
+          if (cd dist && ls -1 | sort | uniq -d | grep -q .); then
+            echo "ERROR: duplicate filenames detected in dist/ (would cause asset conflicts)"
+            exit 1
+          fi
+
+          # Hard fail if we somehow have zero assets
+          if [ "$(find dist -maxdepth 1 -type f -name 'do-ddns-*' | wc -l)" -eq 0 ]; then
+            echo "ERROR: no release assets found in dist/"
+            exit 1
+          fi
+
+      - name: Create & publish release (draft-first, safe uploads)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
 
+          echo "Preparing release for tag: ${tag}"
+
+          # Ensure gh is authenticated
+          gh auth status
+
+          # If a release already exists for this tag (draft or published), delete it.
+          # This prevents any "update existing asset" behavior from retries/partials.
           if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; deleting to recreate cleanly..."
             gh release delete "$tag" -y
           fi
 
-          gh release create "$tag" dist/do-ddns-* \
-            --generate-notes \
-            --latest
+          # 1) Create draft release with NO assets (prevents create-time asset update issues)
+          gh release create "$tag" --draft --generate-notes
 
-          gh release edit "$tag" --draft=false
+          # 2) Upload assets to the draft
+          # Use a deterministic, de-duplicated file list
+          mapfile -t files < <(find dist -maxdepth 1 -type f -name 'do-ddns-*' -print | sort)
 
- 
+          echo "Uploading assets:"
+          printf '  %s\n' "${files[@]}"
+
+          # Upload (no clobber needed because release is new; if you prefer, add --clobber)
+          gh release upload "$tag" "${files[@]}"
+
+          # 3) Publish (not draft) and mark latest
+          gh release edit "$tag" --draft=false --latest
