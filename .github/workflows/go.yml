@@ -96,7 +96,6 @@ jobs:
             dist/*.tar.gz
             dist/do-ddns-*
             dist/*.sha256
-
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -113,20 +112,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          find artifacts -type f \( -name 'do-ddns-*' -o -name '*.sha256' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
+          find artifacts -type f -name 'do-ddns-*' -exec cp {} dist/ \;
+          echo "=== dist contents ==="
           ls -lah dist
 
-      - name: Create release with binaries (no source needed)
+      - name: Create release with binaries (published)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
 
-          # Create the release and attach assets in one shot
-          gh release create "$tag" \
-            dist/do-ddns-* dist/*.sha256 dist/*.tar.gz \
+          gh release create "$tag" dist/do-ddns-* \
             --generate-notes \
             --latest
-          # Force it to be published (not a draft), even if defaults/settings ever change
+
           gh release edit "$tag" --draft=false
+
+ 
