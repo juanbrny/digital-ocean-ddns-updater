@@ -128,4 +128,5 @@ jobs:
             dist/do-ddns-* dist/*.sha256 dist/*.tar.gz \
             --generate-notes \
             --latest
-
+          # Force it to be published (not a draft), even if defaults/settings ever change
+          gh release edit "$tag" --draft=false
