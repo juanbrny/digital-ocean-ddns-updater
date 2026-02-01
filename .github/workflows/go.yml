@@ -113,7 +113,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      # Option A: checkout so gh can use git context (and gh auth status won't error)
+      # Checkout so gh can use git context (and gh auth status won't error)
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -132,10 +132,10 @@ jobs:
           # Copy only our release assets into dist/
           find artifacts -type f -name 'do-ddns-*' -exec cp -f {} dist/ \;
 
-          echo "=== dist contents ==="
+          echo "=== dist contents (before aliases) ==="
           ls -lah dist
 
-          echo "=== duplicate filenames check ==="
+          echo "=== duplicate filenames check (before aliases) ==="
           if (cd dist && ls -1 | sort | uniq -d | grep -q .); then
             echo "ERROR: duplicate filenames detected in dist/ (would cause asset conflicts)"
             (cd dist && ls -1 | sort | uniq -d)
@@ -144,6 +144,51 @@ jobs:
 
           if [ "$(find dist -maxdepth 1 -type f -name 'do-ddns-*' | wc -l)" -eq 0 ]; then
             echo "ERROR: no release assets found in dist/"
+            exit 1
+          fi
+
+      # Option A: create stable alias assets for /releases/latest/download/...
+      - name: Create stable alias assets (latest-friendly)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+
+          # Create stable aliases for raw binaries only (exclude checksums and tarballs)
+          # do-ddns-v0.1.9-linux-arm64 -> do-ddns-linux-arm64
+          created=0
+          for f in do-ddns-v*-*; do
+            case "$f" in
+              *.sha256|*.tar.gz) continue ;;
+            esac
+
+            alias="$(echo "$f" | sed -E 's/^do-ddns-v[^-]+-/do-ddns-/')"
+
+            # Avoid overwriting if already exists (should not, but defensive)
+            if [ -e "$alias" ]; then
+              echo "ERROR: alias target already exists: $alias"
+              exit 1
+            fi
+
+            cp -f "$f" "$alias"
+            sha256sum "$alias" > "${alias}.sha256"
+            created=$((created + 1))
+          done
+
+          if [ "$created" -eq 0 ]; then
+            echo "ERROR: did not find any versioned binaries (do-ddns-v*-*) to alias"
+            ls -lah
+            exit 1
+          fi
+
+          echo "=== dist contents (after aliases) ==="
+          ls -lah
+
+          echo "=== duplicate filenames check (after aliases) ==="
+          if (ls -1 | sort | uniq -d | grep -q .); then
+            echo "ERROR: duplicate filenames detected in dist/ after alias creation"
+            (ls -1 | sort | uniq -d)
             exit 1
           fi
 
@@ -157,20 +202,18 @@ jobs:
 
           echo "Preparing release for tag: ${tag}"
 
-          # Ensure gh is authenticated (requires checkout to avoid ".git" error)
           gh auth status
 
           # If a release already exists for this tag (draft or published), delete it.
-          # This prevents any "update existing asset" behavior from retries/partials.
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; deleting to recreate cleanly..."
             gh release delete "$tag" -y
           fi
 
-          # 1) Create draft release with NO assets (avoids create-time asset update issues)
+          # 1) Create draft release with NO assets
           gh release create "$tag" --draft --generate-notes
 
-          # 2) Upload assets to the draft using a deterministic, de-duplicated list
+          # 2) Upload assets (versioned + stable aliases + tarballs + checksums)
           mapfile -t files < <(find dist -maxdepth 1 -type f -name 'do-ddns-*' -print | sort)
 
           echo "Uploading assets:"
@@ -178,5 +221,5 @@ jobs:
 
           gh release upload "$tag" "${files[@]}"
 
-          # 3) Publish (not draft) and mark latest
+          # 3) Publish and mark latest
           gh release edit "$tag" --draft=false --latest
