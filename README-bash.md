@@ -64,8 +64,7 @@ cat <<EOF > /etc/systemd/system/do-ddns-hq.timer
 Description=Run DigitalOcean DDNS updater every 5 minutes
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=5min
+OnCalendar=*:0/5
 AccuracySec=30s
 Persistent=true
 
